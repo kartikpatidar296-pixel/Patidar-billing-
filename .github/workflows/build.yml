@@ -4,8 +4,7 @@ name: PATIDAR BILLING Build
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
   android:
@@ -17,17 +16,27 @@ jobs:
         run: |
           mkdir app
           unzip -o "$(find . -maxdepth 1 -name '*.zip' | head -n 1)" -d app
+          PROJECT_DIR=$(dirname "$(find app -name pubspec.yaml | head -n 1)")
+          echo "APP_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "pubspec.yaml not found"
+            exit 1
+          fi
 
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
 
+      - name: Fix Dart code
+        run: |
+          python3 -c "from pathlib import Path; p=Path('$APP_DIR/lib/main.dart'); s=p.read_text(); p.write_text(s.replace('const ListView(', 'ListView('))"
+
       - name: Prepare Android project
-        working-directory: app
+        working-directory: ${{ env.APP_DIR }}
         run: flutter create . --platforms=android
 
       - name: Build APK
-        working-directory: app
+        working-directory: ${{ env.APP_DIR }}
         run: |
           flutter pub get
           flutter build apk --release
@@ -35,7 +44,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: PATIDAR-BILLING-APK
-          path: app/build/app/outputs/flutter-apk/app-release.apk
+          path: ${{ env.APP_DIR }}/build/app/outputs/flutter-apk/app-release.apk
 
   windows:
     runs-on: windows-latest
@@ -46,19 +55,31 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force app
-          $zip = Get-ChildItem -Filter *.zip | Select-Object -First 1
+          $zip = Get-ChildItem -Path . -Filter *.zip | Select-Object -First 1
           Expand-Archive -Path $zip.FullName -DestinationPath app -Force
+          $pubspec = Get-ChildItem -Path app -Filter pubspec.yaml -Recurse | Select-Object -First 1
+          if (-not $pubspec) { throw "pubspec.yaml not found" }
+          $projectDir = $pubspec.Directory.FullName
+          "APP_DIR=$projectDir" >> $env:GITHUB_ENV
 
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
 
+      - name: Fix Dart code
+        shell: pwsh
+        run: |
+          $file = Join-Path $env:APP_DIR "lib/main.dart"
+          $content = Get-Content $file -Raw
+          $content = $content.Replace("const ListView(", "ListView(")
+          Set-Content -Path $file -Value $content
+
       - name: Prepare Windows project
-        working-directory: app
+        working-directory: ${{ env.APP_DIR }}
         run: flutter create . --platforms=windows
 
       - name: Build Windows EXE
-        working-directory: app
+        working-directory: ${{ env.APP_DIR }}
         run: |
           flutter pub get
           flutter build windows --release
@@ -66,5 +87,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: PATIDAR-BILLING-WINDOWS
-          path: app/build/windows/x64/runner/Release/
-
+          path: ${{ env.APP_DIR }}/build/windows/x64/runner/Release/
